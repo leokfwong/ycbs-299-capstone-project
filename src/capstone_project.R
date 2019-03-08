@@ -4,10 +4,6 @@
 ######################                                                        ######################
 ####################################################################################################
 
-# Creation date: 01 Mar 2019
-# Last modified: 04 Mar 2019
-# version 1.1
-
 # Set working directory
 setwd("H:/CTN222Database/Data Management/Stats/Enrollment Checklist/src")
 
