@@ -116,8 +116,9 @@ pseudoR2
 # pseudoR2_mean
 
 # Test prediction
+library(dplyr)
 df_test_po <- df_test
-df_test_po_mean <- df_test
+# df_test_po_mean <- df_test
 df_test_po$pred <- predict(po_model, newdata = df_test_po, type = "response")
 df_test_po %>% mutate(residual = pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
 # df_test_po_mean$pred <- predict(po_model_mean, newdata = df_test_po, type = "response")
@@ -156,13 +157,6 @@ elog <- as.data.frame(cv$evaluation_log)
 nrounds <- which.min(elog$test_rmse_mean)
 nrounds
 
-
-df_md_gb <- df_test
-treatplan <- designTreatmentsZ(df_md_gb, vars)
-newvars <- treatplan$scoreFrame %>% filter(code %in% c("clean", "lev")) %>% magrittr::use_series(varName)
-
-df_md_gb.treat <- prepare(treatplan, df_md_gb, varRestriction = newvars)
-
 gb_model <- xgboost(data = as.matrix(df_md_gb.treat),
                     label = df_md_gb$calls_count,
                     nrounds = nrounds,
@@ -170,9 +164,39 @@ gb_model <- xgboost(data = as.matrix(df_md_gb.treat),
                     eta = 0.3, 
                     depth = 6)
 
-df_md_gb.treat$pred <- predict(gb_model, as.matrix(df_md_gb.treat))
-gb_pred <- df_md_gb.treat$pred
+df_md_gb_test <- df_test
+treatplan <- designTreatmentsZ(df_md_gb_test, vars)
+newvars <- treatplan$scoreFrame %>% filter(code %in% c("clean", "lev")) %>% magrittr::use_series(varName)
 
-df_md_gb <- cbind(df_md_gb, gb_pred)
+df_md_gb_test.treat <- prepare(treatplan, df_md_gb_test, varRestriction = newvars)
 
-df_md_gb %>% mutate(residual = gb_pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
+df_md_gb_test.treat$month_lev_x_4 <- 0
+df_md_gb_test.treat$month_lev_x_5 <- 0
+df_md_gb_test.treat$month_lev_x_6 <- 0
+df_md_gb_test.treat$month_lev_x_7 <- 0
+df_md_gb_test.treat$month_lev_x_8 <- 0
+df_md_gb_test.treat$month_lev_x_9 <- 0
+df_md_gb_test.treat$month_lev_x_10 <- 0
+df_md_gb_test.treat$month_lev_x_11 <- 0
+df_md_gb_test.treat$month_lev_x_12 <- 0
+
+names(df_md_gb_test.treat) <- names(df_md_gb.treat)
+
+
+df_md_gb_test.treat$pred <- predict(gb_model, as.matrix(df_md_gb_test.treat))
+gb_pred <- df_md_gb_test.treat$pred
+
+df_md_gb_test <- cbind(df_md_gb_test, gb_pred)
+
+df_md_gb_test %>% mutate(residual = gb_pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
+
+
+
+# plot
+plot(x=df_md_gb_test$gb_pred,y=df_md_gb_test$calls_count)
+abline(lm(df_md_gb_test$calls_count ~ df_md_gb_test$gb_pred), col = "blue")
+
+
+# Add additional features (day of week, is holiday, is_before_2008)
+# Change continuous to categorical (rain, snow)
+# Properly split data 20/80
