@@ -65,9 +65,9 @@ df_callsperday <- within(df_callsperday, {
   day_of_week <- gsub("5", "Saturday", day_of_week)
   day_of_week <- gsub("6", "Sunday", day_of_week)
   day_of_week <- as.factor(day_of_week)
-  year <- as.factor(year)
+  year <- as.numeric(year)
   is_pre <- ifelse(as.numeric(as.character(year)) <= 2009, 1, 0)
-  is_pre <- as.factor(is_pre)
+  year_is_pre <- year * is_pre
   
 })
 
@@ -88,9 +88,11 @@ df_test <- df_callsperday[(bound+1):nrow(df_callsperday), ]
 ### MODELING ###
 ################
 
+library(dplyr)
+
 outcome = "calls_count"
 # vars = c("day_of_week", "is_holiday", "temp_mean", "rain_total", "snow_total", "month")
-vars = c("year", "month", "temp_mean", "did_rain", "did_snow", "is_holiday", "day_of_week")
+vars = c("year", "month", "temp_mean", "did_rain", "is_holiday", "day_of_week", "is_pre", "year_is_pre")
 
 # Compute the mean and variance to see if there is a significant difference
 mean(df_train$calls_count)
@@ -98,6 +100,9 @@ var(df_train$calls_count)
 
 # Define the Y and x
 fmla <- paste(outcome, "~", paste(vars, collapse = " + "))
+
+
+# compareModelsAnova(vars, outcome)
 
 ##########################
 ### GLM - QUASIPOISSON ###
@@ -110,21 +115,28 @@ po_model <- glm(fmla, data = df_train, family = quasipoisson)
 pseudoR2 <- 1 - po_model$deviance/po_model$null.deviance
 pseudoR2
 
-#####################
-### RANDOM FOREST ###
-#####################
-
 # Test prediction
-library(dplyr)
 df_test_po <- df_test
-# df_test_po_mean <- df_test
 df_test_po$pred <- predict(po_model, newdata = df_test_po, type = "response")
 df_test_po %>% mutate(residual = pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
 
+# TODO MAKE FUNCTION
+SS.total <- with(df_test_po, sum((calls_count - mean(calls_count))^2))
+SS.residual <- with(df_test_po, sum((calls_count - pred)^2))
+SS.regression <- with(df_test_po, sum((pred - mean(calls_count))^2))
+SS.regression/SS.total
 
-#########################
-### GRADIENT BOOSTING ###
-#########################
+
+# Test prediction example with 2019
+# df_test_2019 <- df_test
+# df_test_2019$year <- 2021
+# df_test_2019$is_pre <- ifelse(df_test_2019$year <= 2009, 1, 0)
+# df_test_2019$year_is_pre <- df_test_2019$year * df_test_2019$is_pre
+# df_test_2019$pred <- predict(po_model, newdata = df_test_2019, type = "response")
+
+#####################
+### RANDOM FOREST ###
+#####################
 
 library(ranger)
 library(dplyr)
@@ -132,8 +144,13 @@ df_md_rf <- df_test
 rf_model <- ranger(fmla, df_train, num.trees = 500, respect.unordered.factors = "order")
 df_md_rf$pred <- predict(rf_model, df_test)$predictions
 
+## TODO Get R2 for train and test
+
 df_md_rf %>% mutate(residual = pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
 
+#########################
+### GRADIENT BOOSTING ###
+#########################
 
 library(vtreat)
 df_md_gb <- df_train
@@ -151,6 +168,16 @@ cv <- xgb.cv(data = as.matrix(df_md_gb.treat),
 elog <- as.data.frame(cv$evaluation_log)
 nrounds <- which.min(elog$test_rmse_mean)
 nrounds
+
+elog_train <- elog[c("iter", "train_rmse_mean")]
+names(elog_train) <- c("iter", "rmse_mean")
+elog_train$dataset <- "Train"
+elog_test <- elog[c("iter", "test_rmse_mean")]
+names(elog_test) <- c("iter", "rmse_mean")
+elog_test$dataset <- "Test"
+elog_stack <- rbind(elog_train, elog_test)
+library(ggplot2)
+ggplot(elog_stack, aes(x = factor(iter), y = rmse_mean, colour = dataset)) + geom_point() + xlab("nrounds")
 
 gb_model <- xgboost(data = as.matrix(df_md_gb.treat),
                     label = df_md_gb$calls_count,
@@ -174,9 +201,15 @@ df_md_gb_test <- cbind(df_md_gb_test, gb_pred)
 
 df_md_gb_test %>% mutate(residual = gb_pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
 
+# Check the importance of each feature
+# xgb.importance(colnames(df_md_gb.treat), model = gb_model)
+
 
 
 # plot
 plot(x=df_md_gb_test$gb_pred,y=df_md_gb_test$calls_count)
 abline(lm(df_md_gb_test$calls_count ~ df_md_gb_test$gb_pred), col = "blue")
+
+
+
 

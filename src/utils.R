@@ -59,3 +59,36 @@ mergePredictors <- function(df, df_raw, vars, merge_by) {
   return (df)
   
 }
+
+
+compareModelsAnova <- function(vars, outcome) {
+  
+  models_lst <- list()
+  fmla <- paste(outcome, "~", paste(vars, collapse = "+"))
+  model <- glm(fmla, data = df_train, family = quasipoisson)
+  models_lst <- c(models_lst, list(model))
+  
+  # Compare models
+  for (i in 1:length(vars)) {
+    
+    tmp_vars = vars[!vars %in% vars[i]]
+    fmla <- paste(outcome, "~", paste(tmp_vars, collapse = "+"))
+    print(fmla)
+    model <- glm(fmla, data = df_train, family = quasipoisson)
+    pseudoR2 <- 1 - model$deviance/model$null.deviance
+    print(pseudoR2)
+    models_lst <- c(models_lst, list(model))
+    
+    df_test_po <- df_test
+    df_test_po$pred <- predict(model, newdata = df_test_po, type = "response")
+    print(df_test_po %>% mutate(residual = pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2))))
+    
+  }
+  
+  for (j in 2:length(models_lst)) {
+    
+    print(anova(models_lst[j][[1]], models_lst[1][[1]], test = "LRT"))
+    
+  }
+  
+}
