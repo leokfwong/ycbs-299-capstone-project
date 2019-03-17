@@ -92,3 +92,28 @@ compareModelsAnova <- function(vars, outcome) {
   }
   
 }
+
+
+fn.calculatePseudoR2 <- function(df) {
+  
+  total <- with(df, sum((calls_count - mean(calls_count))^2))
+  residual <- with(df, sum((calls_count - pred)^2))
+  regression <- with(df, sum((pred - mean(calls_count))^2))
+  pseudoR2 <- regression/total
+  
+  return(pseudoR2)
+  
+}
+
+
+fn.plotRMSE <- function(df) {
+  
+  plot(x = df$pred,
+       y = df$calls_count,
+       xlim = c(100, 500), 
+       xlab = "Predicted number of calls", 
+       ylab = "Actual number of calls", 
+       col = "black")
+  abline(lm(df$calls_count ~ df$pred), col = "red")
+  
+}

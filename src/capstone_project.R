@@ -65,8 +65,11 @@ df_callsperday <- within(df_callsperday, {
   day_of_week <- gsub("5", "Saturday", day_of_week)
   day_of_week <- gsub("6", "Sunday", day_of_week)
   day_of_week <- as.factor(day_of_week)
+  # year needs to be continuous, otherwise we cannot predict years outside of 2005-2018
   year <- as.numeric(year)
+  # custome variable based on factual evidence that there is an increase in calls in 2009
   is_pre <- ifelse(as.numeric(as.character(year)) <= 2009, 1, 0)
+  # interaction between year and is_pre
   year_is_pre <- year * is_pre
   
 })
@@ -74,9 +77,13 @@ df_callsperday <- within(df_callsperday, {
 # Remove records where any of the following predictors are missing
 df_callsperday <- subset(df_callsperday, !is.na(temp_mean) & !is.na(did_rain) & !is.na(did_snow) & !is.na(is_holiday))
 
-# Define train and test sets (80/20 split)
+##################
+### SPLIT DATA ###
+##################
+
+# Set seed for reproducibility purposes
 set.seed(101)
-# Percentage of split set to 80
+# Percentage of split set to 80/20
 bound <- floor((nrow(df_callsperday)/5)*4)
 # Sample rows
 df_callsperday <- df_callsperday[sample(nrow(df_callsperday)), ]
@@ -90,17 +97,16 @@ df_test <- df_callsperday[(bound+1):nrow(df_callsperday), ]
 
 library(dplyr)
 
+# Define Y and x
 outcome = "calls_count"
-# vars = c("day_of_week", "is_holiday", "temp_mean", "rain_total", "snow_total", "month")
 vars = c("year", "month", "temp_mean", "did_rain", "is_holiday", "day_of_week", "is_pre", "year_is_pre")
+
+# Create formula Y ~ x1 + x2 + x3...
+fmla <- paste(outcome, "~", paste(vars, collapse = " + "))
 
 # Compute the mean and variance to see if there is a significant difference
 mean(df_train$calls_count)
 var(df_train$calls_count)
-
-# Define the Y and x
-fmla <- paste(outcome, "~", paste(vars, collapse = " + "))
-
 
 # compareModelsAnova(vars, outcome)
 
@@ -120,12 +126,11 @@ df_test_po <- df_test
 df_test_po$pred <- predict(po_model, newdata = df_test_po, type = "response")
 df_test_po %>% mutate(residual = pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
 
-# TODO MAKE FUNCTION
-SS.total <- with(df_test_po, sum((calls_count - mean(calls_count))^2))
-SS.residual <- with(df_test_po, sum((calls_count - pred)^2))
-SS.regression <- with(df_test_po, sum((pred - mean(calls_count))^2))
-SS.regression/SS.total
+# Calculate pseudoR2 for test
+fn.calculatePseudoR2(df_test_po)
 
+# Plot RMSE
+fn.plotRMSE(df_test_po)
 
 # Test prediction example with 2019
 # df_test_2019 <- df_test
@@ -141,12 +146,37 @@ SS.regression/SS.total
 library(ranger)
 library(dplyr)
 df_md_rf <- df_test
-rf_model <- ranger(fmla, df_train, num.trees = 500, respect.unordered.factors = "order")
-df_md_rf$pred <- predict(rf_model, df_test)$predictions
+rf_model <- ranger(fmla, df_train, num.trees = 500, respect.unordered.factors = "order", importance = "impurity")
+df_md_rf$pred <- predict(rf_model, df_md_rf)$predictions
 
 ## TODO Get R2 for train and test
 
 df_md_rf %>% mutate(residual = pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
+
+# Calculate pseudoR2 for test
+fn.calculatePseudoR2(df_md_rf)
+
+# Plot RMSE
+fn.plotRMSE(df_md_rf)
+
+# Plot variable importance graph
+rf_v <- as.vector(rf_model$variable.importance)
+rf_w <- names(rf_model$variable.importance)
+rf_tmp <- rbind(rf_w, rf_v)
+rf_df <- cbind(rf_w, rf_v)
+rf_df <- as.data.frame(rf_df)
+rf_df <- within(rf_df, 
+                rf_w <- factor(rf_w, levels=unique(rf_w[order(rf_v)]), ordered=TRUE))
+
+
+p<-ggplot(data=rf_df, aes(x=rf_w, y=rf_v)) +
+  geom_bar(stat="identity") +
+  ylab("Variable Importance") +
+  xlab("") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+p + coord_flip()
+
 
 #########################
 ### GRADIENT BOOSTING ###
@@ -176,8 +206,12 @@ elog_test <- elog[c("iter", "test_rmse_mean")]
 names(elog_test) <- c("iter", "rmse_mean")
 elog_test$dataset <- "Test"
 elog_stack <- rbind(elog_train, elog_test)
+
+# Plot nrounds train vs test
 library(ggplot2)
-ggplot(elog_stack, aes(x = factor(iter), y = rmse_mean, colour = dataset)) + geom_point() + xlab("nrounds")
+ggplot(elog_stack, aes(x = factor(iter), y = rmse_mean, colour = dataset)) + geom_point() + xlab("nrounds") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
 
 gb_model <- xgboost(data = as.matrix(df_md_gb.treat),
                     label = df_md_gb$calls_count,
@@ -198,17 +232,15 @@ df_md_gb_test.treat$pred <- predict(gb_model, as.matrix(df_md_gb_test.treat))
 gb_pred <- df_md_gb_test.treat$pred
 
 df_md_gb_test <- cbind(df_md_gb_test, gb_pred)
+names(df_md_gb_test)[names(df_md_gb_test) == "gb_pred"] <- "pred"
 
-df_md_gb_test %>% mutate(residual = gb_pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
+df_md_gb_test %>% mutate(residual = pred - calls_count) %>% summarize(rmse = sqrt(mean(residual^2)))
 
-# Check the importance of each feature
-# xgb.importance(colnames(df_md_gb.treat), model = gb_model)
-
-
+# Calculate pseudoR2 for test
+fn.calculatePseudoR2(df_md_gb_test)
 
 # plot
-plot(x=df_md_gb_test$gb_pred,y=df_md_gb_test$calls_count)
-abline(lm(df_md_gb_test$calls_count ~ df_md_gb_test$gb_pred), col = "blue")
+fn.plotRMSE(df_md_gb_test)
 
 
 
